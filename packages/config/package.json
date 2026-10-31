@@ -1,0 +1,11 @@
+{
+  "name": "@tram/config",
+  "version": "0.0.0",
+  "private": true,
+  "files": ["tsconfig.base.json", "tsconfig.react.json", "tsconfig.node.json"],
+  "exports": {
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./tsconfig.react.json": "./tsconfig.react.json",
+    "./tsconfig.node.json": "./tsconfig.node.json"
+  }
+}

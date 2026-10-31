@@ -1,0 +1,4 @@
+pnpm-lock.yaml
+dist
+node_modules
+backend/database/prisma/migrations

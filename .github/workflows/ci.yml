@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tram
+          POSTGRES_PASSWORD: tram
+          POSTGRES_DB: tram_video_test
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U tram" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # Biến giả cho CI (không phải bí mật thật).
+      APP_WEB_URL: http://localhost:5173
+      APP_ADMIN_URL: http://localhost:5174
+      APP_API_URL: http://localhost:3000
+      COOKIE_DOMAIN: localhost
+      DATABASE_URL: postgresql://tram:tram@localhost:5433/tram_video_test
+      TEST_DATABASE_URL: postgresql://tram:tram@localhost:5433/tram_video_test
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci-access-secret-ci-access-secret-123
+      JWT_REFRESH_SECRET: ci-refresh-secret-ci-refresh-secret-12
+      R2_PUBLIC_BASE_URL: https://cdn.example.com
+      SEPAY_WEBHOOK_API_KEY: ci-sepay-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build shared + database (Prisma client)
+        run: pnpm --filter @tram/shared --filter @tram/database build
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - name: Unit test
+        run: pnpm test
+      - name: Integration test (Postgres thật)
+        run: pnpm test:int
+      - run: pnpm build

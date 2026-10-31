@@ -1,0 +1,273 @@
+// Trạm Video – Prisma schema. Nguyên tắc: xem dan_y.md mục 8.
+// - Tiền lưu Int (VND), không Float.
+// - Sổ cái WalletTransaction: không sửa, không xoá.
+// - Wallet.version: khoá lạc quan.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  LOCKED
+}
+
+enum VideoStatus {
+  DRAFT
+  PUBLISHED
+  HIDDEN
+}
+
+enum OrderStatus {
+  COMPLETED
+  REFUNDED
+}
+
+enum LedgerType {
+  TOPUP // nạp xu
+  PURCHASE // mua video
+  REFUND // hoàn xu
+  ADJUSTMENT // admin điều chỉnh tay
+}
+
+enum TopUpStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+}
+
+enum PaymentEventStatus {
+  MATCHED // tự khớp với yêu cầu nạp
+  UNMATCHED // sai nội dung / sai số tiền → chờ admin
+  RESOLVED // admin đã xử lý tay
+  IGNORED // không liên quan
+}
+
+enum AuthTokenType {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  name            String?
+  passwordHash    String?
+  emailVerifiedAt DateTime?
+  role            Role       @default(USER)
+  status          UserStatus @default(ACTIVE)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  wallet        Wallet?
+  oauthAccounts OAuthAccount[]
+  refreshTokens RefreshToken[]
+  authTokens    AuthToken[]
+  orders        Order[]
+  topUps        TopUpRequest[]
+  downloads     DownloadLog[]
+
+  @@index([createdAt])
+}
+
+model OAuthAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String // "google"
+  providerAccountId String
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Token một lần cho xác thực email / đặt lại mật khẩu (lưu dạng băm).
+model AuthToken {
+  id        String        @id @default(cuid())
+  userId    String
+  type      AuthTokenType
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+}
+
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Int      @default(0)
+  version   Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id])
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id           String     @id @default(cuid())
+  walletId     String
+  type         LedgerType
+  amount       Int // dương: cộng, âm: trừ
+  balanceAfter Int
+  refType      String? // "order" | "topup" | "admin" | "payment"
+  refId        String?
+  note         String?
+  createdById  String? // admin thực hiện (với ADJUSTMENT)
+  createdAt    DateTime   @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id])
+
+  @@index([walletId, createdAt])
+}
+
+model TopUpRequest {
+  id             String      @id @default(cuid())
+  userId         String
+  code           String      @unique // nội dung chuyển khoản, VD "TV8K2Q7M"
+  amount         Int
+  status         TopUpStatus @default(PENDING)
+  expiresAt      DateTime
+  completedAt    DateTime?
+  paymentEventId String?     @unique
+  createdAt      DateTime    @default(now())
+
+  user         User          @relation(fields: [userId], references: [id])
+  paymentEvent PaymentEvent? @relation(fields: [paymentEventId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([status, expiresAt])
+}
+
+model PaymentEvent {
+  id            String             @id @default(cuid())
+  provider      String // "sepay"
+  providerTxId  String // mã giao dịch phía SePay
+  amount        Int
+  content       String // nội dung chuyển khoản gốc
+  bankAccount   String?
+  transferredAt DateTime
+  raw           Json // payload gốc để tra soát
+  status        PaymentEventStatus
+  resolvedById  String?
+  resolvedAt    DateTime?
+  note          String?
+  createdAt     DateTime           @default(now())
+
+  topUp TopUpRequest?
+
+  @@unique([provider, providerTxId])
+  @@index([status, createdAt])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  videos Video[]
+}
+
+model Video {
+  id            String      @id @default(cuid())
+  title         String
+  slug          String      @unique
+  description   String?
+  price         Int
+  durationSec   Int
+  width         Int?
+  height        Int?
+  fileKey       String? // key file gốc trong bucket PRIVATE (null khi chưa upload)
+  fileSize      BigInt?
+  previewKey    String? // key preview trong bucket PUBLIC
+  thumbnailKey  String?
+  tags          String[]
+  status        VideoStatus @default(DRAFT)
+  categoryId    String
+  purchaseCount Int         @default(0)
+  publishedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  category  Category      @relation(fields: [categoryId], references: [id])
+  orders    Order[]
+  downloads DownloadLog[]
+
+  @@index([status, publishedAt])
+  @@index([categoryId, status])
+  @@index([status, purchaseCount])
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  userId     String
+  videoId    String
+  price      Int // giá tại thời điểm mua
+  status     OrderStatus @default(COMPLETED)
+  refundedAt DateTime?
+  createdAt  DateTime    @default(now())
+
+  user  User  @relation(fields: [userId], references: [id])
+  video Video @relation(fields: [videoId], references: [id])
+
+  @@unique([userId, videoId])
+  @@index([createdAt])
+}
+
+model DownloadLog {
+  id        String   @id @default(cuid())
+  userId    String
+  videoId   String
+  ip        String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id])
+  video Video @relation(fields: [videoId], references: [id])
+
+  @@index([userId, videoId, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  action     String // "video.publish", "wallet.adjust", "user.lock"...
+  targetType String
+  targetId   String
+  data       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}

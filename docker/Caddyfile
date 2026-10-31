@@ -1,0 +1,13 @@
+# Caddy tự cấp SSL (Let's Encrypt) cho api.tramvideo.vn.
+# web/admin là file tĩnh trên Cloudflare Pages nên không đi qua đây.
+api.tramvideo.vn {
+	encode gzip
+	reverse_proxy api:3000
+	header {
+		-Server
+	}
+	log {
+		output stdout
+		format json
+	}
+}
